@@ -125,6 +125,16 @@ def conversations(db: Session = Depends(get_db), user: User = Depends(current_us
     return {"conversations": [{"id": r.id, "title": r.title, "updated_at": r.updated_at.isoformat()} for r in rows]}
 
 
+@router.delete("/conversations/{conv_id}")
+def delete_conversation(conv_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    conv = db.get(Conversation, conv_id)
+    if conv is None or conv.user_id != user.id:
+        raise HTTPException(404, "Conversation not found.")
+    db.delete(conv)  # messages and citations go with it (ON DELETE CASCADE)
+    db.commit()
+    return {"ok": True}
+
+
 @router.get("/conversations/{conv_id}")
 def conversation(conv_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
     conv = db.get(Conversation, conv_id)

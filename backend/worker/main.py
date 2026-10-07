@@ -12,8 +12,9 @@ from sqlalchemy import text
 from app import jobs
 from app.config import get_settings
 from app.db.session import SessionLocal, session_scope
+from app.embed.embedder import EmbeddingModelMissing, get_embedder
 from app.logging_setup import setup_logging
-from app.store import all_settings
+from app.store import all_settings, get_setting
 from worker.jobs import Requeue, index_file, scan_folder
 from worker.watcher import WatcherManager
 
@@ -26,17 +27,24 @@ SHUTDOWN_GRACE = 50  # seconds; docker stop_grace_period is 60
 class Ctx:
     """Passed to handlers. A ticker thread keeps the heartbeat alive during long silent steps (OCR, LibreOffice)."""
 
+    MIN_INTERVAL = 1.0  # seconds between progress writes (per-page updates on big files would flood the DB)
+
     def __init__(self, job_id: int):
         self.job_id = job_id
+        self._last = 0.0
         self._done = threading.Event()
         self._ticker = threading.Thread(target=self._tick, daemon=True)
         self._ticker.start()
 
     def _tick(self):
         while not self._done.wait(20):
-            self.progress(None)
+            self.progress(None, force=True)
 
-    def progress(self, fraction: float | None, message: str | None = None) -> None:
+    def progress(self, fraction: float | None, message: str | None = None, force: bool = False) -> None:
+        now = time.monotonic()
+        if not force and now - self._last < self.MIN_INTERVAL:
+            return
+        self._last = now
         try:
             with SessionLocal() as db:
                 jobs.heartbeat(db, self.job_id, fraction, message)
@@ -86,6 +94,7 @@ class Worker:
         except Requeue as r:
             with SessionLocal() as db:
                 jobs.requeue(db, job["id"], r.payload, r.delay_seconds)
+                jobs.reset_orphaned_processing(db)
         except Exception as e:
             log.exception("job failed", extra={"event": "job_failed", "job_id": job["id"], "type": job["type"]})
             with SessionLocal() as db:
@@ -131,28 +140,39 @@ class Worker:
         """On shutdown, hand unfinished jobs straight back to the queue (resume on next start)."""
         with SessionLocal() as db:
             n = db.execute(text("""
-                UPDATE jobs SET status = 'queued', attempts = GREATEST(attempts - 1, 0), locked_by = NULL
+                UPDATE jobs SET status = 'queued', attempts = GREATEST(attempts - 1, 0), locked_by = NULL,
+                                progress = NULL, progress_msg = NULL
                 WHERE status = 'running' AND locked_by = :w
                   AND NOT EXISTS (SELECT 1 FROM jobs q WHERE q.status = 'queued' AND q.dedupe_key = jobs.dedupe_key)
             """), {"w": self.id}).rowcount
             db.commit()
+            jobs.reset_orphaned_processing(db)
         if n:
             log.info("released unfinished jobs", extra={"event": "jobs_released", "count": n})
 
-    def wait_for_db(self) -> None:
+    def wait_until_ready(self) -> None:
+        """Wait for migrations, the index preparation for the configured embedding model, and the model files."""
         while not self.stop.is_set():
             try:
                 with SessionLocal() as db:
-                    db.execute(text("SELECT 1 FROM jobs LIMIT 1"))
+                    if get_setting(db, "index_embedding_model") != self.s.embedding_model:
+                        raise RuntimeError("index not prepared for the configured embedding model yet")
+                get_embedder()
                 return
+            except EmbeddingModelMissing as e:
+                log.error(str(e), extra={"event": "embed_missing"})
+                self.stop.wait(30)
             except Exception as e:
-                log.info("waiting for database/migrations: %s", type(e).__name__)
+                log.info("waiting for database: %s", e)
                 self.stop.wait(3)
 
     def run(self) -> None:
         signal.signal(signal.SIGTERM, lambda *_: self.stop.set())
         signal.signal(signal.SIGINT, lambda *_: self.stop.set())
-        self.wait_for_db()
+        self.wait_until_ready()
+        with SessionLocal() as db:
+            jobs.reap_stale(db, stale_seconds=60)
+            jobs.reset_orphaned_processing(db)
         with session_scope() as db:  # catch up on anything that changed while we were down
             for (fid,) in db.execute(text("SELECT id FROM folders WHERE enabled")).all():
                 jobs.enqueue_scan(db, fid)

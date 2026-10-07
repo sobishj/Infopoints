@@ -1,3 +1,5 @@
+import re
+
 """Human-readable location labels and source headers, shared by indexing and answering."""
 
 
@@ -24,5 +26,18 @@ def loc_label(loc_type: str, page: int | None = None, line_start: int | None = N
     return f"Lines {line_start}–{line_end}"
 
 
-def source_header(file_name: str, label: str) -> str:
-    return f"[Source: {file_name} | {label}]"
+def source_header(file_name: str, label: str, section: str | None = None) -> str:
+    return f"[Source: {file_name} | {label}" + (f" | {section}]" if section else "]")
+
+
+def section_of(loc_type: str, heading: str | None) -> str | None:
+    """Section path shown next to page/slide locations (headings of text files are already in the label)."""
+    return heading if loc_type in ("page", "slide") and heading else None
+
+
+def section_title_text(section: str) -> str:
+    """How a section path is embedded for question → section matching: numbers dropped, camelCase split
+    ("3 Authentication › 3.1 RequestToken" → "Authentication › Request Token"). Measured on an API
+    reference, this separates look-alike titles (RequestToken vs RequestTokenChangeMailAddress) far better."""
+    parts = [re.sub(r"^\d+(\.\d+)*\s+", "", p) for p in section.split(" › ")]
+    return re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", " › ".join(parts))

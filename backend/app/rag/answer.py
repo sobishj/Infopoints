@@ -11,9 +11,10 @@ from starlette.concurrency import run_in_threadpool
 from app.access import allowed_project_ids
 from app.db.models import Conversation, Message, MessageCitation, User
 from app.db.session import SessionLocal
-from app.embed.embedder import EmbeddingModelMissing, embedder
+from app.embed.embedder import EmbeddingModelMissing, get_embedder
 from app.llm.provider import LLMError, provider_for, resolve_model
 from app.rag.citations import validate
+from app.rag.code_guard import guard_code
 from app.rag.prompt import NOT_FOUND, build_messages, pack_sources
 from app.rag.retrieve import Retrieved, retrieve
 
@@ -34,7 +35,7 @@ def _snippet(text: str, n: int = 260) -> str:
 
 def source_card(n: int, c: Retrieved, cited: bool) -> dict:
     return {"n": n, "chunk_id": c.chunk_id, "file_id": c.file_id, "file_name": c.file_name, "kind": c.kind,
-            "ext": c.ext, "label": c.label, "page": c.page, "t_start": c.t_start, "snippet": _snippet(c.text),
+            "ext": c.ext, "label": c.label, "section": c.section, "page": c.page, "t_start": c.t_start, "snippet": _snippet(c.text),
             "open_url": open_url(c.file_id, c.kind, c.page, c.t_start), "cited": cited}
 
 
@@ -54,7 +55,7 @@ def _prepare(user_id: int, question: str, project_ids: list[int] | None, convers
         db.commit()
         if not projects:
             return conv.id, cfg, projects, [], False
-        qvec = embedder.encode([question])[0]
+        qvec = get_embedder().query(question)
         chunks, relevant = retrieve(db, question, qvec, projects)
         db.commit()
         return conv.id, cfg, projects, chunks, relevant
@@ -64,6 +65,8 @@ def _save(conv_id: int, text: str, status: str, model_id: int | None, latency_ms
           cards: list[dict], sources: list[Retrieved]) -> int:
     sha = {c.chunk_id: c.file_sha256 for c in sources}
     with SessionLocal() as db:
+        if db.get(Conversation, conv_id) is None:  # the chat was deleted while the answer was being written
+            return 0
         msg = Message(conversation_id=conv_id, role="assistant", content=text, status=status, model_id=model_id,
                       latency_ms=latency_ms)
         db.add(msg)
@@ -126,14 +129,19 @@ async def ask(user: User, question: str, project_ids: list[int] | None, conversa
         yield "error", {"message": f"The AI model isn't responding. {e}"}
         return
 
-    v = validate("".join(parts), len(sources), [c.text for c in sources])
+    # Which source continues which on the next page (same file and section), so samples aren't cut at page breaks.
+    position = {(c.file_id, c.section, c.page): i for i, c in enumerate(sources) if c.page}
+    next_of = {i: position[(c.file_id, c.section, c.page + 1)] for i, c in enumerate(sources)
+               if c.page and (c.file_id, c.section, c.page + 1) in position}
+    answer, code_replaced = guard_code("".join(parts), [c.text for c in sources], question, next_of)
+    v = validate(answer, len(sources), [c.text for c in sources], question)
     status = "not_found" if v.not_found else "ok"
     cards = [source_card(i, c, i in v.cited) for i, c in enumerate(sources, 1)]
     if status == "not_found":
         cards = cards[:3]
     latency = int((time.time() - started) * 1000)
     msg_id = await run_in_threadpool(_save, conv_id, v.text, status, cfg.id, latency, cards, sources)
-    log.info("answer", extra={"event": "ask", "status": status, "cited": v.cited, "invalid_markers": v.invalid, "regrounded": v.regrounded,
+    log.info("answer", extra={"event": "ask", "status": status, "cited": v.cited, "invalid_markers": v.invalid, "regrounded": v.regrounded, "code_replaced": code_replaced, "supported": round(v.supported, 2),
                               "sources": len(sources), "ms": latency, "model": cfg.model_name})
     yield "final", {"status": status, "text": v.text, "cited": v.cited, "uncited": status == "ok" and not v.cited,
                     "sources": cards, "message_id": msg_id}

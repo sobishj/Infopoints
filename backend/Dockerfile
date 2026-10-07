@@ -23,11 +23,8 @@ WORKDIR /app
 COPY backend/requirements-common.txt ./
 RUN pip install -r requirements-common.txt
 
-# ---------------------------------------------------------------- api (embeddings live here)
+# ---------------------------------------------------------------- api
 FROM base AS api
-RUN pip install torch --index-url https://download.pytorch.org/whl/cpu
-COPY backend/requirements-api.txt ./
-RUN pip install -r requirements-api.txt
 COPY backend/ ./
 COPY --from=web /web/dist /app/static
 EXPOSE 8080

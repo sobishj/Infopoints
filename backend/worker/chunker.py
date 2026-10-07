@@ -1,10 +1,11 @@
-"""Token-sized chunks (~500 tokens, ~60 overlap) that never cross a segment (page/slide/section) boundary."""
+"""Token-sized chunks (~450 tokens, ~50 overlap) that never cross a segment (page/slide/section) boundary."""
 import re
 from dataclasses import dataclass
 from functools import lru_cache
 
 from app.config import get_settings
-from app.locations import loc_label, source_header
+from app.embed.models import get_spec
+from app.locations import loc_label, section_of, source_header
 from worker.extract import Segment
 
 _SENTENCE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(\[])")
@@ -94,14 +95,31 @@ def chunk_segment_texts(text: str, max_tokens: int, overlap: int) -> list[tuple[
     return chunks
 
 
+MIN_LETTERS = 3  # a page number ("6") has no searchable content
+
+
+def has_content(text: str, heading: str | None = None) -> bool:
+    """False for passages that would only waste a search slot: a bare page number, or just the section
+    heading itself ("2 Common Methods") with nothing under it."""
+    if sum(ch.isalpha() for ch in text) < MIN_LETTERS:
+        return False
+    words = " ".join(text.split()).lower()
+    title = " ".join((heading or "").split(" › ")[-1].split()).lower()
+    return not title or words != title
+
+
 def chunk_segments(segments: list[Segment], file_name: str) -> list[ChunkDraft]:
     s = get_settings()
+    # Leave room for the file-name line and model prefix within the embedding model's input limit.
+    max_tokens = min(s.chunk_tokens, get_spec(s.embedding_model).max_tokens - 64)
     drafts: list[ChunkDraft] = []
     for seg in segments:
         label = loc_label(seg.loc_type, page=seg.page, line_start=seg.line_start, line_end=seg.line_end,
                           heading=seg.heading)
-        header = source_header(file_name, label)
-        for text, n in chunk_segment_texts(seg.text, s.chunk_tokens, s.chunk_overlap_tokens):
+        header = source_header(file_name, label, section_of(seg.loc_type, seg.heading))
+        for text, n in chunk_segment_texts(seg.text, max_tokens, s.chunk_overlap_tokens):
+            if not has_content(text, seg.heading if seg.loc_type == "page" else None):
+                continue
             drafts.append(ChunkDraft(ordinal=len(drafts), text=text, token_count=n, segment=seg, label=label,
                                      header=header))
     return drafts

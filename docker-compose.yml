@@ -6,7 +6,6 @@ x-app: &app
   env_file: .env
   environment:
     DATABASE_URL: postgresql+psycopg://infopoint:infopoint@db:5432/infopoint
-    EMBED_URL: http://api:8080/internal/embed
     MODELS_DIR: /models
     DATA_DIR: /data
   extra_hosts:
@@ -38,7 +37,7 @@ services:
       dockerfile: backend/Dockerfile
       target: api
     image: infopoint-api:latest
-    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8080 --proxy-headers"
+    command: sh -c "alembic upgrade head && python -m app.tools.prepare_index && uvicorn app.main:app --host 0.0.0.0 --port 8080 --proxy-headers"
     ports:
       - "127.0.0.1:${APP_PORT:-8765}:8080"
     volumes:

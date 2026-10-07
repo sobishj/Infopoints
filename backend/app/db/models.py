@@ -118,7 +118,8 @@ class Chunk(Base):
     source_header: Mapped[str]
     text: Mapped[str]
     token_count: Mapped[int]
-    embedding = mapped_column(Vector(1024))
+    embedding = mapped_column(Vector())  # dimension follows the embedding model (app/tools/prepare_index.py)
+    heading_embedding = mapped_column(Vector(), nullable=True)  # section path, for question → section matching
 
 
 class TranscriptSegment(Base):

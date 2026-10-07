@@ -33,11 +33,8 @@ class Settings(BaseSettings):
     llm_max_concurrency: int = 2
     llm_timeout_seconds: float = 180.0
 
-    embedding_model: str = "BAAI/bge-m3"
-    embedding_dim: int = 1024
-    embed_url: str = "http://api:8080/internal/embed"
-    embed_threads: int = 6
-    embed_batch_size: int = 16
+    embedding_model: str = "multilingual-e5-small"   # see app/embed/models.py
+    embed_threads: int = 8
 
     ocr_langs: str = "eng"
     folder_poll_seconds: int = 20
@@ -45,12 +42,12 @@ class Settings(BaseSettings):
     stability_seconds: int = 10
     doc_lane_slots: int = 2
 
-    chunk_tokens: int = 500
-    chunk_overlap_tokens: int = 60
+    chunk_tokens: int = 450          # capped below the embedding model's input limit
+    chunk_overlap_tokens: int = 50
 
     retrieval_top_k: int = 8
     retrieval_candidates: int = 40
-    min_vector_similarity: float = 0.45
+    min_vector_similarity: float | None = None   # None = the embedding model's calibrated default
     answer_reserve_tokens: int = 1024
 
     @property
@@ -59,7 +56,7 @@ class Settings(BaseSettings):
 
     @property
     def embedding_model_path(self) -> Path:
-        return self.models_dir / self.embedding_model.split("/")[-1].lower()
+        return self.models_dir / self.embedding_model
 
 
 @lru_cache

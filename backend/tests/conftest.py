@@ -47,6 +47,10 @@ def _ensure_database():
     cfg = Config(os.path.join(os.path.dirname(os.path.dirname(__file__)), "alembic.ini"))
     cfg.set_main_option("script_location", os.path.join(os.path.dirname(os.path.dirname(__file__)), "alembic"))
     command.upgrade(cfg, "head")
+    from app.db.session import engine
+    from app.tools.prepare_index import prepare
+    with engine.begin() as conn:
+        prepare(conn, get_settings().embedding_model)
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -56,7 +60,8 @@ def database():
 
 
 TABLES = ("bionic_events, service_heartbeats, audit_log, settings, message_citations, messages, conversations, "
-          "models, jobs, transcript_segments, chunks, files, user_projects, projects, folders, sessions, users")
+          "models, jobs, transcript_segments, chunks, files, user_projects, projects, folders, sessions, users, "
+          "embedding_cache")
 
 
 @pytest.fixture(autouse=True)
@@ -79,26 +84,41 @@ def db():
 
 # ---------------------------------------------------------------- fake embeddings
 def fake_vector(text_: str) -> list[float]:
-    """Bag-of-words hashed into 1024 dims: texts sharing words are similar, unrelated texts are not."""
-    v = [0.0] * 1024
+    """Bag-of-words hashed into the model's dimension: texts sharing words are similar, unrelated ones are not."""
+    from app.embed.models import get_spec
+    dim = get_spec(get_settings().embedding_model).dim
+    v = [0.0] * dim
     for w in re.findall(r"[a-z0-9]+", text_.lower()):
         if len(w) < 3:
             continue
         h = int(hashlib.md5(w.encode()).hexdigest(), 16)
-        v[h % 1024] += 1.0
+        v[h % dim] += 1.0
     n = math.sqrt(sum(x * x for x in v)) or 1.0
     if n == 1.0 and not any(v):
         v[0] = 1.0
     return [x / n for x in v]
 
 
-@pytest.fixture(autouse=True)
-def fake_embeddings(monkeypatch):
-    import worker.jobs.index_file as idx
-    monkeypatch.setattr(idx, "embed_passages", lambda texts, progress=None: [fake_vector(t) for t in texts])
-    from app.embed import embedder as emb
-    monkeypatch.setattr(emb.embedder, "encode", lambda texts: [fake_vector(t) for t in texts])
+class FakeEmbedder:
+    def __init__(self):
+        self.passage_calls = 0
 
+    def passages(self, texts):
+        self.passage_calls += len(texts)
+        return [fake_vector(t) for t in texts]
+
+    def query(self, text_):
+        return fake_vector(text_)
+
+
+@pytest.fixture(autouse=True)
+def fake_embedder(monkeypatch):
+    fake = FakeEmbedder()
+    import app.rag.answer as answer
+    import worker.jobs.index_file as idx
+    monkeypatch.setattr(idx, "get_embedder", lambda: fake)
+    monkeypatch.setattr(answer, "get_embedder", lambda: fake)
+    return fake
 
 # ---------------------------------------------------------------- helpers
 class NullCtx:

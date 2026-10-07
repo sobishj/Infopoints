@@ -28,7 +28,7 @@ The script:
 1. creates `.env` on first run (random secrets; the admin password is printed and stored in `.env`),
 2. sets the default document folder to your **Downloads** folder,
 3. starts Bionic if it isn't serving yet (it is left running afterwards; AiTrading shares it),
-4. builds the Docker images and downloads the embedding model (first run only, ~2.3 GB, needs internet once),
+4. builds the Docker images and downloads the embedding model (first run only, ~120 MB, needs internet once),
 5. starts `db`, `api` and `worker`, and opens <http://localhost:8765>.
 
 On first start InfoPoint asks you to choose a document folder. If you skip, it indexes your Downloads folder.
@@ -62,13 +62,25 @@ LibreOffice so citations carry real page/slide numbers), TXT and Markdown.
 | `QWEN_MODEL_NAME` | `qwen2.5-1.5b-instruct` | Model id served by Bionic |
 | `QWEN_CONTEXT_LENGTH` | `32768` | Context window Bionic loads the model with |
 | `LLM_MAX_CONCURRENCY` | `2` | Max simultaneous requests InfoPoint sends to the shared model |
-| `EMBEDDING_MODEL` | `BAAI/bge-m3` | Changing it requires re-indexing all files |
+| `EMBEDDING_MODEL` | `multilingual-e5-small` | `multilingual-e5-small` (fast) or `bge-m3` (stronger, ~5x slower). Changing it re-indexes all files automatically |
 | `RESCAN_INTERVAL_SECONDS` | `300` | Full rescan interval (also editable in Settings) |
-| `MIN_VECTOR_SIMILARITY` | `0.45` | Below this the app answers "couldn't find" without asking the model |
+| `MIN_VECTOR_SIMILARITY` | model default | Override the model's calibrated "couldn't find" threshold (e5-small: 0.835) |
 | `AUTO_LOGIN` | `true` | Desktop single-user mode |
 
 The model seeded on first start is the local Qwen in Bionic. Model management in the UI arrives in Phase 3; until
 then the `models` table can be edited directly.
+
+## Indexing speed (large document sets)
+
+Embeddings run in-process with ONNX Runtime (int8), no GPU or PyTorch needed. Measured on the
+target laptop (Core 7 150U): a 243-page API reference (248 passages) indexes in about **28 seconds**.
+
+- Progress is shown per page and per batch of passages, so large files never look frozen.
+- Every embedded passage is cached by its text. An interrupted file (restart, crash) resumes where it
+  stopped, and an edited document only re-embeds the passages that actually changed.
+- The original file is only open while it is copied; indexing works on a private snapshot.
+- `bge-m3` gives somewhat better retrieval at ~5x the indexing time. Set `EMBEDDING_MODEL=bge-m3`,
+  run `scripts\download_models.ps1` and restart; all files are re-indexed automatically.
 
 ## How answers are produced
 

@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { FileText, FileType2, Presentation, ExternalLink, AlertCircle } from "lucide-react";
@@ -38,11 +39,14 @@ export function AnswerBody({ turn, active, onHover }: { turn: Turn } & HoverProp
     return (
       <div className="rounded-md border border-line bg-surface p-4">
         <p className="font-semibold">Not found in documents</p>
-        <p className="mt-1 text-muted">I couldn't find this in the project documents.
+        <p className="mt-1 text-muted">I could not find anything about this in the selected document folders.
           {turn.sources.length > 0 ? " These sources look related and may help:" : " Try rephrasing, or check that the right project is selected."}
         </p>
       </div>
     );
+  }
+  if (turn.status === "streaming" && !turn.text) {
+    return <Thinking turn={turn} />;
   }
   return (
     <div className="prose-answer" aria-live={turn.status === "streaming" ? "polite" : undefined}>
@@ -62,6 +66,48 @@ export function AnswerBody({ turn, active, onHover }: { turn: Turn } & HoverProp
         <p className="mt-2 text-[14px] text-muted">This answer has no source references — check it against the documents before relying on it.</p>
       )}
     </div>
+  );
+}
+
+/** Shown until the first words of the answer arrive. */
+export function Thinking({ turn }: { turn: Turn }) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const started = turn.startedAt ?? Date.now();
+    const t = setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(t);
+  }, [turn.startedAt]);
+
+  const n = turn.sources.length;
+  const label = turn.phase === "reading"
+    ? `Reading ${n} source${n === 1 ? "" : "s"} and writing the answer`
+    : "Searching your documents";
+  return (
+    <div className="flex flex-col gap-1.5 py-1" role="status" aria-live="polite">
+      <div className="flex items-center gap-3">
+        <span className="thinking-dots" aria-hidden><span /><span /><span /></span>
+        <span className="thinking-text text-[15px]">{label}…</span>
+      </div>
+      {elapsed >= 12 && (
+        <p className="pl-[38px] text-[13.5px] text-muted">
+          {elapsed}s — the local AI model may be starting up; the first answer after a quiet period can take a minute.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Sources listed after the answer, like references at the end of a document. */
+export function References({ turn, active, onHover }: { turn: Turn } & HoverProps) {
+  const { title, cards } = visibleSources(turn);
+  if (!cards.length) return null;
+  return (
+    <section className="mt-5 border-t border-line pt-4" aria-label={title}>
+      <h3 className="mb-2 text-[12.5px] font-semibold uppercase tracking-wide text-muted">{title}</h3>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {cards.map((c) => <SourceCardView key={c.n} card={c} active={active} onHover={onHover} />)}
+      </div>
+    </section>
   );
 }
 
@@ -85,7 +131,9 @@ export function SourceCardView({ card, active, onHover }: { card: Card } & Hover
             <FileIcon card={card} />
             <span className="truncate text-[14.5px] font-semibold" title={card.file_name}>{card.file_name}</span>
           </div>
-          <div className="mt-0.5 text-[13.5px] text-muted">{card.label}</div>
+          <div className="mt-0.5 truncate text-[13.5px] text-muted" title={card.section ?? undefined}>
+            {card.label}{card.section ? ` · ${card.section.split(" › ").pop()}` : ""}
+          </div>
         </div>
       </div>
       <p className="mt-2 line-clamp-3 text-[13.5px] leading-snug text-muted">{card.snippet}</p>
@@ -102,7 +150,6 @@ export function SourceCardView({ card, active, onHover }: { card: Card } & Hover
 /** Cited sources for answered questions; related ones for "not found". */
 export function visibleSources(turn: Turn): { title: string; cards: Card[] } {
   if (turn.status === "not_found") return { title: "Related sources", cards: turn.sources };
-  if (turn.status === "streaming") return { title: "Searching sources", cards: turn.sources };
-  const cited = turn.sources.filter((s) => s.cited);
-  return { title: "Sources", cards: cited };
+  if (turn.status === "streaming") return { title: "References", cards: [] };  // answer first, references after
+  return { title: "References", cards: turn.sources.filter((s) => s.cited) };
 }

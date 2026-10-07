@@ -65,6 +65,22 @@ def test_unrelated_question_fails_the_relevance_gate(db, two_projects):
     assert relevant is False
 
 
+def test_keyword_search_ranks_by_how_many_question_words_match(db, two_projects):
+    pa, pb = two_projects
+    from app.rag.retrieve import _fts_hits
+    hits = _fts_hits(db, "approve purchase orders pending wifi", [pa, pb], 10)
+    # Any word may match (OR), the page with most of them comes first; coverage = 4 of 5 terms.
+    assert hits and hits[0][1] == 0.8
+    assert _fts_hits(db, "the and of", [pa, pb], 10) == []  # stop words only
+
+
+def test_single_shared_word_does_not_pass_the_gate(db, two_projects):
+    pa, pb = two_projects
+    q = "monthly cafeteria menu"  # shares only "month" with the payroll page
+    _hits, relevant = retrieve(db, q, fake_vector(q), [pa, pb])
+    assert relevant is False
+
+
 def test_file_access_checks_project(db, two_projects):
     pa, pb = two_projects
     u = _user(db, [pa])

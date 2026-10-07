@@ -107,7 +107,8 @@ def reap_stale(db: Session, stale_seconds: int = 120) -> int:
     result = db.execute(
         text("""
             UPDATE jobs SET status = CASE WHEN attempts < max_attempts THEN 'queued' ELSE 'failed' END,
-                            locked_by = NULL, error = 'worker stopped while running this job'
+                            locked_by = NULL, progress = NULL, progress_msg = NULL,
+                            error = 'worker stopped while running this job'
             WHERE status = 'running' AND heartbeat_at < now() - make_interval(secs => :s)
               AND NOT EXISTS (SELECT 1 FROM jobs q WHERE q.status = 'queued' AND q.dedupe_key = jobs.dedupe_key)
         """),
@@ -119,7 +120,19 @@ def reap_stale(db: Session, stale_seconds: int = 120) -> int:
         dict(s=stale_seconds),
     )
     db.commit()
+    reset_orphaned_processing(db)
     return result.rowcount
+
+
+def reset_orphaned_processing(db: Session) -> int:
+    """Files left 'processing' by an interrupted job go back to 'queued' (shown as Waiting, resumed later)."""
+    n = db.execute(text("""
+        UPDATE files f SET status = 'queued'
+        WHERE f.status = 'processing'
+          AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.file_id = f.id AND j.status = 'running')
+    """)).rowcount
+    db.commit()
+    return n
 
 
 def utcnow() -> datetime:

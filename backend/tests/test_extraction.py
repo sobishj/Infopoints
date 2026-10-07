@@ -101,4 +101,5 @@ def test_pptx_slides(tmp_path):
     ex = extract_pdf(pdf, loc_type="slide")
     chunks = chunk_segments(ex.segments, "demo.pptx")
     hit = [c for c in chunks if "Approval flow" in c.text][0]
-    assert hit.segment.page == 2 and hit.header == "[Source: demo.pptx | Slide 2]"
+    # LibreOffice exports slide titles as PDF bookmarks, so each slide carries its title as the section.
+    assert hit.segment.page == 2 and hit.header == "[Source: demo.pptx | Slide 2 | Approval flow walkthrough]"

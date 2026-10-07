@@ -1,10 +1,11 @@
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { Plus, ArrowUp } from "lucide-react";
+import { Plus, ArrowUp, MoreHorizontal, Trash2 } from "lucide-react";
 
 import { api, postStream } from "../api/client";
 import type { Conversation, Project, SourceCard, Turn } from "../api/types";
-import { AnswerBody, SourceCardView, visibleSources } from "../components/Answer";
+import { AnswerBody, References } from "../components/Answer";
+import { Confirm } from "../components/Modal";
 
 const EXAMPLES = [
   "How do I approve a pending purchase order?",
@@ -23,6 +24,8 @@ export default function AskPage() {
   const [question, setQuestion] = useState("");
   const [active, setActive] = useState<number | null>(null);
   const [focusTurn, setFocusTurn] = useState<number>(-1);
+  const [menuFor, setMenuFor] = useState<number | null>(null);
+  const [deleting, setDeleting] = useState<Conversation | null>(null);
   const busy = turns.some((t) => t.status === "streaming");
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -80,7 +83,8 @@ export default function AskPage() {
     q = q.trim();
     if (!q || busy) return;
     const key = `${Date.now()}`;
-    setTurns((ts) => [...ts, { key, question: q, text: "", status: "streaming", sources: [], cited: [] }]);
+    setTurns((ts) => [...ts, { key, question: q, text: "", status: "streaming", phase: "searching", startedAt: Date.now(),
+                                 sources: [], cited: [] }]);
     setFocusTurn(-1);
     setQuestion("");
     try {
@@ -88,8 +92,8 @@ export default function AskPage() {
         if (event === "meta") {
           setConvId(data.conversation_id);
           if (String(data.conversation_id) !== conversationId) navigate(`/c/${data.conversation_id}`, { replace: true });
-        } else if (event === "sources") update(key, (t) => ({ ...t, sources: data.sources }));
-        else if (event === "token") update(key, (t) => ({ ...t, text: t.text + data.t }));
+        } else if (event === "sources") update(key, (t) => ({ ...t, sources: data.sources, phase: "reading" }));
+        else if (event === "token") update(key, (t) => ({ ...t, text: t.text + data.t, phase: "writing" }));
         else if (event === "final")
           update(key, (t) => ({ ...t, text: data.text, status: data.status, cited: data.cited, uncited: data.uncited,
                                 sources: data.sources ?? t.sources }));
@@ -109,11 +113,25 @@ export default function AskPage() {
   };
 
   const newConversation = () => { setTurns([]); setConvId(null); navigate("/"); inputRef.current?.focus(); };
+  const deleteConversation = async (c: Conversation) => {
+    setDeleting(null);
+    await api(`/api/conversations/${c.id}`, { method: "DELETE" });
+    if (c.id === convId) newConversation();
+    loadConversations();
+  };
+
+  // Close the ⋯ menu on any click outside it.
+  useEffect(() => {
+    if (menuFor === null) return;
+    const close = () => setMenuFor(null);
+    window.addEventListener("click", close);
+    return () => window.removeEventListener("click", close);
+  }, [menuFor]);
+
   const toggleProject = (id: number) =>
     setSelected((s) => (s ?? []).includes(id) ? (s ?? []).filter((x) => x !== id) : [...(s ?? []), id]);
 
-  const panelTurn = turns.length ? turns[focusTurn >= 0 ? focusTurn : turns.length - 1] : null;
-  const panel = panelTurn ? visibleSources(panelTurn) : null;
+  const activeTurn = turns.length ? turns[focusTurn >= 0 ? focusTurn : turns.length - 1] : null;
 
   return (
     <div className="flex h-full">
@@ -121,7 +139,7 @@ export default function AskPage() {
       <aside className="hidden w-64 shrink-0 flex-col border-r border-line bg-surface md:flex">
         <div className="p-4">
           <button className="btn-secondary w-full justify-center" onClick={newConversation}>
-            <Plus className="h-4 w-4" aria-hidden /> New question
+            <Plus className="h-4 w-4" aria-hidden /> New chat
           </button>
         </div>
         <section className="px-4 pb-4">
@@ -141,14 +159,31 @@ export default function AskPage() {
           </ul>
         </section>
         <section className="min-h-0 flex-1 overflow-y-auto border-t border-line px-4 py-4">
-          <h2 className="mb-2 text-[12.5px] font-semibold uppercase tracking-wide text-muted">Recent</h2>
+          <h2 className="mb-2 text-[12.5px] font-semibold uppercase tracking-wide text-muted">Chats</h2>
+          {conversations.length === 0 && <p className="text-[14px] text-muted">No chats yet.</p>}
           <ul className="space-y-0.5">
             {conversations.map((c) => (
-              <li key={c.id}>
-                <Link to={`/c/${c.id}`}
-                      className={`block truncate rounded px-2 py-1 text-[14px] ${c.id === convId ? "bg-accent-soft text-accent" : "text-ink hover:bg-page"}`}>
+              <li key={c.id} className={`group relative flex items-center rounded ${c.id === convId ? "bg-accent-soft" : "hover:bg-page"}`}>
+                <Link to={`/c/${c.id}`} title={c.title}
+                      className={`min-w-0 flex-1 truncate px-2 py-1 text-[14px] ${c.id === convId ? "text-accent" : "text-ink"}`}>
                   {c.title}
                 </Link>
+                <button type="button" aria-label={`Options for ${c.title}`} aria-haspopup="menu"
+                        aria-expanded={menuFor === c.id}
+                        onClick={(e) => { e.stopPropagation(); setMenuFor(menuFor === c.id ? null : c.id); }}
+                        className={`mr-1 rounded p-1 text-muted hover:bg-line hover:text-ink focus:opacity-100 ${menuFor === c.id || c.id === convId ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}>
+                  <MoreHorizontal className="h-4 w-4" aria-hidden />
+                </button>
+                {menuFor === c.id && (
+                  <div role="menu" className="card absolute right-1 top-8 z-20 w-36 py-1 shadow-md"
+                       onClick={(e) => e.stopPropagation()}>
+                    <button role="menuitem" type="button"
+                            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[14px] text-danger hover:bg-page"
+                            onClick={() => { setMenuFor(null); setDeleting(c); }}>
+                      <Trash2 className="h-4 w-4" aria-hidden /> Delete
+                    </button>
+                  </div>
+                )}
               </li>
             ))}
           </ul>
@@ -165,13 +200,11 @@ export default function AskPage() {
               turns.map((t, i) => (
                 <article key={t.key} className="mb-10" onMouseEnter={() => setFocusTurn(i)}>
                   <h2 className="mb-3 text-[18px] leading-snug">{t.question}</h2>
-                  <AnswerBody turn={t} active={panelTurn === t ? active : null} onHover={(n) => { setFocusTurn(i); setActive(n); }} />
-                  {/* Sources inline on narrower screens (the side panel is hidden there). */}
-                  <div className="mt-4 space-y-2 xl:hidden">
-                    {visibleSources(t).cards.map((c) => (
-                      <SourceCardView key={c.n} card={c} active={active} onHover={setActive} />
-                    ))}
-                  </div>
+                  <AnswerBody turn={t} active={activeTurn === t ? active : null} onHover={(n) => { setFocusTurn(i); setActive(n); }} />
+                  {t.status !== "streaming" && (
+                    <References turn={t} active={activeTurn === t ? active : null}
+                                onHover={(n) => { setFocusTurn(i); setActive(n); }} />
+                  )}
                 </article>
               ))
             )}
@@ -191,19 +224,11 @@ export default function AskPage() {
         </form>
       </section>
 
-      {/* ---------------------------------------------------------------- sources panel */}
-      <aside className="hidden w-[340px] shrink-0 overflow-y-auto border-l border-line bg-page p-4 xl:block" aria-label="Sources">
-        {panel && panel.cards.length > 0 ? (
-          <>
-            <h2 className="mb-3 text-[12.5px] font-semibold uppercase tracking-wide text-muted">{panel.title}</h2>
-            <div className="space-y-2">
-              {panel.cards.map((c) => <SourceCardView key={c.n} card={c} active={active} onHover={setActive} />)}
-            </div>
-          </>
-        ) : (
-          <p className="mt-2 text-[14px] text-muted">Sources for an answer appear here, with the page to open.</p>
-        )}
-      </aside>
+      {deleting && (
+        <Confirm title="Delete chat?" danger confirmLabel="Delete"
+                 message={<>This deletes <strong>{deleting.title}</strong> and all its questions and answers.</>}
+                 onConfirm={() => deleteConversation(deleting)} onCancel={() => setDeleting(null)} />
+      )}
     </div>
   );
 }
@@ -213,7 +238,7 @@ function EmptyState({ onPick, hasProjects }: { onPick: (q: string) => void; hasP
     <div className="pt-10">
       <h1 className="text-[24px] leading-tight">Ask about your project documents</h1>
       <p className="mt-2 text-muted">
-        Answers come only from the documents in your selected projects, with the file and page for every statement.
+        Answers come only from the documents in your selected folders, followed by the file and page they came from. If the folders don't cover a question, InfoPoint says so instead of guessing.
       </p>
       {!hasProjects && (
         <p className="mt-4 rounded-md border border-line bg-surface p-3 text-[14.5px]">

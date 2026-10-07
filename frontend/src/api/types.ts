@@ -29,6 +29,7 @@ export interface SourceCard {
   kind?: string;
   ext?: string;
   label: string;
+  section?: string | null;
   page: number | null;
   t_start: number | null;
   snippet: string;
@@ -39,11 +40,16 @@ export interface SourceCard {
 
 export type TurnStatus = "streaming" | "ok" | "not_found" | "error" | "no_projects";
 
+/** While streaming: searching the index → reading the retrieved sources → writing the answer. */
+export type TurnPhase = "searching" | "reading" | "writing";
+
 export interface Turn {
   key: string;
   question: string;
   text: string;
   status: TurnStatus;
+  phase?: TurnPhase;
+  startedAt?: number;
   sources: SourceCard[];
   cited: number[];
   uncited?: boolean;

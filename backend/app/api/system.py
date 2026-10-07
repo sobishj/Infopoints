@@ -1,14 +1,13 @@
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
-from starlette.concurrency import run_in_threadpool
 
 from app.auth.deps import current_user, require_admin
 from app.config import get_settings
 from app.db.models import LLMModel, User
 from app.db.session import get_db
-from app.embed.embedder import EmbeddingModelMissing, embedder
+from app.embed.embedder import is_installed
 from app.llm.provider import provider_for, resolve_model
 from app.store import all_settings, set_setting, audit
 
@@ -77,22 +76,6 @@ async def health(db: Session = Depends(get_db)):
         out["llm"] = {"ok": ok, "detail": detail, "model": cfg.model_name, "base_url": cfg.base_url}
     except Exception as e:  # health must always answer
         out["error"] = f"{type(e).__name__}: {e}"
-    out["embedding"] = {"model": get_settings().embedding_model, "loaded": embedder.loaded,
-                        "installed": (get_settings().embedding_model_path / "config.json").exists()}
+    out["embedding"] = {"model": get_settings().embedding_model, "installed": is_installed()}
     return out
 
-
-# ---------------------------------------------------------------- internal (worker → api)
-class EmbedIn(BaseModel):
-    texts: list[str]
-
-
-@router.post("/internal/embed", include_in_schema=False)
-async def internal_embed(body: EmbedIn, x_internal_token: str = Header(default="")):
-    if x_internal_token != get_settings().internal_token:
-        raise HTTPException(403, "Forbidden.")
-    try:
-        vectors = await run_in_threadpool(embedder.encode, body.texts)
-    except EmbeddingModelMissing as e:
-        raise HTTPException(503, str(e))
-    return {"vectors": vectors}

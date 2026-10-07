@@ -8,6 +8,7 @@ import pytesseract
 from PIL import Image
 
 from worker.extract import Extracted, ExtractionError, Segment
+from worker.extract.sections import SectionTracker, is_toc_page, split_by_headings
 
 log = logging.getLogger("infopoint.extract.pdf")
 
@@ -49,6 +50,21 @@ def _ocr_images(doc: "fitz.Document", page: "fitz.Page", langs: str, cache: dict
     return texts
 
 
+def _page_segments(text: str, page_no: int, loc_type: str, outline: dict[int, list[tuple[int, str]]],
+                   tracker: SectionTracker) -> list[Segment]:
+    """One page → segments tagged with their section path (split where a new heading starts)."""
+    if not text:
+        return []
+    if outline:  # the PDF's own bookmarks are the most reliable section source
+        for level, title in outline.get(page_no, []):
+            tracker.enter_outline(level, title)
+        return [Segment(text=text, loc_type=loc_type, page=page_no, heading=tracker.current)]
+    if is_toc_page(text):
+        return [Segment(text=text, loc_type=loc_type, page=page_no, heading="Contents")]
+    return [Segment(text=part, loc_type=loc_type, page=page_no, heading=section)
+            for section, part in split_by_headings(text, tracker)]
+
+
 def extract_pdf(path: str, langs: str = "eng", loc_type: str = "page", ocr_images: bool = True,
                 progress: Callable[[float, str], None] | None = None) -> Extracted:
     try:
@@ -61,8 +77,12 @@ def extract_pdf(path: str, langs: str = "eng", loc_type: str = "page", ocr_image
         raise ExtractionError("PDF has no pages (damaged file?).")
     segments: list[Segment] = []
     image_cache: dict[int, str] = {}
+    tracker = SectionTracker()
     with doc:
         n = doc.page_count
+        outline: dict[int, list[tuple[int, str]]] = {}
+        for level, title, page_no in doc.get_toc(simple=True):
+            outline.setdefault(page_no, []).append((level, title))
         for i, page in enumerate(doc):
             text = page.get_text("text").strip()
             if len(text) < MIN_PAGE_CHARS:
@@ -72,8 +92,7 @@ def extract_pdf(path: str, langs: str = "eng", loc_type: str = "page", ocr_image
                 shots = _ocr_images(doc, page, langs, image_cache)
                 if shots:
                     text += "\n\n" + "\n".join(f"[Screenshot text] {t}" for t in shots)
-            if text:
-                segments.append(Segment(text=text, loc_type=loc_type, page=i + 1))
-            if progress and (i % 5 == 4 or i == n - 1):
-                progress((i + 1) / n * 0.5, f"Reading page {i + 1} of {n}")
+            segments.extend(_page_segments(text, i + 1, loc_type, outline, tracker))
+            if progress:  # fraction of pages read; the job context throttles database updates
+                progress((i + 1) / n, f"Reading page {i + 1} of {n}")
     return Extracted(segments=segments, page_count=n)

@@ -90,10 +90,8 @@ if ($Build -or -not $images) {
     & docker @compose build
     if ($LASTEXITCODE -ne 0) { throw "Docker build failed." }
 }
-if (-not (Test-Path "data\models\bge-m3\config.json")) {
-    Write-Host "   Embedding model not installed yet - downloading (one time, needs internet)..."
-    & "$PSScriptRoot\download_models.ps1"
-}
+# Installs the configured embedding model if missing (needs internet once; a no-op afterwards).
+& "$PSScriptRoot\download_models.ps1"
 & docker @compose up -d
 if ($LASTEXITCODE -ne 0) { throw "docker compose up failed." }
 

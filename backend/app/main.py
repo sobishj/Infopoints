@@ -12,7 +12,7 @@ from app.auth.provider import hash_password
 from app.config import get_settings
 from app.db.models import LLMModel, User
 from app.db.session import SessionLocal
-from app.embed.embedder import EmbeddingModelMissing, embedder
+from app.embed.embedder import EmbeddingModelMissing, get_embedder
 from app.logging_setup import setup_logging
 from app.store import encrypt_secret
 
@@ -38,8 +38,7 @@ def bootstrap() -> None:
 
 def _warm_embedder() -> None:
     try:
-        embedder.encode(["warm-up"])
-        log.info("embedding model ready", extra={"event": "embed_ready"})
+        get_embedder().query("warm-up")
     except EmbeddingModelMissing as e:
         log.error(str(e), extra={"event": "embed_missing"})
     except Exception:
