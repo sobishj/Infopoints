@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { FileText, FileType2, Presentation, ExternalLink, AlertCircle } from "lucide-react";
+import { FileText, FileType2, Presentation, ExternalLink, AlertCircle, ShieldCheck } from "lucide-react";
 
 import type { SourceCard as Card, Turn } from "../api/types";
 import { linkCitations } from "../format";
@@ -103,6 +103,13 @@ export function References({ turn, active, onHover }: { turn: Turn } & HoverProp
   if (!cards.length) return null;
   return (
     <section className="mt-5 border-t border-line pt-4" aria-label={title}>
+      {turn.status === "ok" && (
+        <p className="mb-3 flex items-start gap-1.5 text-[13.5px] text-muted">
+          <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-accent" aria-hidden />
+          <span>This answer is taken only from your documents. To verify it, open the references below and
+            check the details in the original file.</span>
+        </p>
+      )}
       <h3 className="mb-2 text-[12.5px] font-semibold uppercase tracking-wide text-muted">{title}</h3>
       <div className="grid gap-2 sm:grid-cols-2">
         {cards.map((c) => <SourceCardView key={c.n} card={c} active={active} onHover={onHover} />)}
