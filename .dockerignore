@@ -1,0 +1,10 @@
+.env
+data
+offline_bundle
+logs
+**/node_modules
+**/__pycache__
+**/.pytest_cache
+frontend/dist
+docs
+launcher

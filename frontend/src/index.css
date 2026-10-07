@@ -1,0 +1,37 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html { background: #FAFAF7; color: #1F2328; }
+  body { @apply bg-page text-ink font-sans text-base antialiased; }
+  :focus-visible { outline: 2px solid #0F6E6E; outline-offset: 2px; border-radius: 4px; }
+  h1, h2, h3, strong, b, th { font-weight: 600; }
+}
+
+@layer components {
+  .btn { @apply inline-flex items-center gap-2 rounded-md border px-3.5 py-1.5 text-[14.5px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed; }
+  .btn-primary { @apply btn border-accent bg-accent text-white hover:bg-accent-hover hover:border-accent-hover; }
+  .btn-secondary { @apply btn border-line bg-surface text-ink hover:border-muted; }
+  .btn-quiet { @apply btn border-transparent bg-transparent text-accent hover:bg-accent-soft; }
+  .btn-danger { @apply btn border-line bg-surface text-danger hover:border-danger; }
+  .input { @apply w-full rounded-md border border-line bg-surface px-3 py-2 text-[15px] placeholder:text-muted focus:border-accent focus:outline-none; }
+  .label { @apply mb-1 block text-[14px] text-muted; }
+  .card { @apply rounded-lg border border-line bg-surface; }
+  .link { @apply text-accent underline-offset-2 hover:underline; }
+  .table-base { @apply w-full text-left text-[14.5px]; }
+  .table-base th { @apply border-b border-line px-3 py-2 text-[13px] font-semibold uppercase tracking-wide text-muted; }
+  .table-base td { @apply border-b border-line px-3 py-2.5 align-top; }
+}
+
+/* Answers read like a document, not a chat bubble. */
+.prose-answer { line-height: 1.7; }
+.prose-answer p { margin: 0 0 0.85em; }
+.prose-answer ol, .prose-answer ul { margin: 0 0 0.85em; padding-left: 1.4em; }
+.prose-answer ol { list-style: decimal; }
+.prose-answer ul { list-style: disc; }
+.prose-answer li { margin: 0.2em 0; }
+.prose-answer h1, .prose-answer h2, .prose-answer h3 { font-size: 1.05em; margin: 1em 0 0.4em; }
+.prose-answer code { background: #F2F1EC; padding: 0.1em 0.35em; border-radius: 4px; font-size: 0.92em; }
+.prose-answer table { border-collapse: collapse; margin: 0 0 1em; }
+.prose-answer td, .prose-answer th { border: 1px solid #E7E5E0; padding: 0.3em 0.6em; }

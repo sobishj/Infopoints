@@ -1,0 +1,12 @@
+.env
+data/
+offline_bundle/
+docker-compose.roots.yml
+logs/
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+node_modules/
+frontend/dist/
+*.tsbuildinfo
